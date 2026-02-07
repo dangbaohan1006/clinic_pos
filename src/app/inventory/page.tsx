@@ -1,8 +1,6 @@
-import Link from "next/link";
-import { Pill, ShoppingCart, Activity } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import InventoryTable from '@/components/inventory/InventoryTable';
 
-export default function Home() {
+export default function InventoryPage() {
     return (
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-slate-50">
             <div className="text-center mb-10">
@@ -52,14 +50,9 @@ export default function Home() {
                             <p className="text-slate-500">
                                 Xem danh sách tồn kho, cập nhật giá bán và số lượng thuốc mới nhập.
                             </p>
-                        </CardContent>
-                    </Card>
-                </Link>
-            </div>
+                        </div>
 
-            <div className="mt-12 text-sm text-slate-400">
-                Phiên bản 1.0.0 - Senior AI Data Engineer
-            </div>
-        </main>
-    );
+                        <InventoryTable />
+                    </div>
+                    );
 }
