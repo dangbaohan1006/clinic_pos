@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Edit, Loader2 } from 'lucide-react';
+import { Edit, Loader2, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Medicine } from '@/types';
 import {
@@ -28,8 +28,9 @@ import { toast } from 'sonner';
 export default function InventoryTable() {
     const [medicines, setMedicines] = useState<Medicine[]>([]);
     const [loading, setLoading] = useState(true);
-    const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+    // Nếu editingMedicine = null (hoặc id = undefined) nghĩa là đang Thêm mới
+    const [formData, setFormData] = useState<Partial<Medicine>>({});
     const [isSaving, setIsSaving] = useState(false);
 
     const fetchMedicines = useCallback(async () => {
@@ -38,15 +39,16 @@ export default function InventoryTable() {
             const { data, error } = await supabase
                 .from('medicines')
                 .select('*')
+                .eq('active', true)
                 .order('id', { ascending: true });
 
             if (error) {
-                toast.error('Lỗi khi tải danh sách thuốc: ' + error.message);
+                toast.error('Lỗi tải dữ liệu: ' + error.message);
             } else {
                 setMedicines(data || []);
             }
         } catch (error) {
-            console.error('Unexpected error:', error);
+            console.error(error);
         } finally {
             setLoading(false);
         }
@@ -56,167 +58,186 @@ export default function InventoryTable() {
         fetchMedicines();
     }, [fetchMedicines]);
 
-    const handleEdit = (medicine: Medicine) => {
-        setEditingMedicine({ ...medicine });
-        setIsEditDialogOpen(true);
+    // Hàm mở Dialog THÊM MỚI
+    const openAddModal = () => {
+        setFormData({}); // Reset form trắng
+        setIsDialogOpen(true); // Mở Dialog
+    };
+
+    // Hàm mở Dialog SỬA
+    const openEditModal = (medicine: Medicine) => {
+        setFormData(medicine); // Điền dữ liệu cũ
+        setIsDialogOpen(true); // Mở Dialog
     };
 
     const handleSave = async () => {
-        if (!editingMedicine) return;
+        // Validate
+        if (!formData.name || !formData.unit || formData.price === undefined) {
+            toast.error("Vui lòng nhập tên, đơn vị và giá!");
+            return;
+        }
 
         try {
             setIsSaving(true);
-            const { error } = await supabase
-                .from('medicines')
-                .update({
-                    price: editingMedicine.price,
-                    quantity: editingMedicine.quantity,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq('id', editingMedicine.id);
 
-            if (error) {
-                toast.error('Lỗi khi cập nhật: ' + error.message);
-            } else {
+            if (formData.id) {
+                // --- LOGIC SỬA (UPDATE) ---
+                const { error } = await supabase
+                    .from('medicines')
+                    .update({
+                        price: formData.price,
+                        quantity: formData.quantity,
+                        unit: formData.unit,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', formData.id);
+                if (error) throw error;
                 toast.success('Cập nhật thành công!');
-                setIsEditDialogOpen(false);
-                fetchMedicines();
+            } else {
+                // --- LOGIC THÊM MỚI (INSERT) ---
+                const { error } = await supabase
+                    .from('medicines')
+                    .insert([{
+                        name: formData.name,
+                        unit: formData.unit,
+                        price: formData.price,
+                        quantity: formData.quantity || 0,
+                        active: true
+                    }]);
+                if (error) throw error;
+                toast.success('Thêm thuốc mới thành công!');
             }
-        } catch (error) {
-            console.error('Update error:', error);
-            toast.error('Đã xảy ra lỗi không xác định.');
+
+            setIsDialogOpen(false); // Đóng Dialog
+            fetchMedicines(); // Tải lại bảng
+        } catch (error: any) {
+            console.error('Save error:', error);
+            toast.error('Lỗi: ' + error.message);
         } finally {
             setIsSaving(false);
         }
     };
 
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat('vi-VN', {
-            style: 'currency',
-            currency: 'VND',
-        }).format(value);
+    const handleDelete = async (id: number) => {
+        if (!confirm('Bạn có chắc muốn xóa thuốc này không?')) return;
+
+        const { error } = await supabase
+            .from('medicines')
+            .update({ active: false })
+            .eq('id', id);
+
+        if (error) {
+            toast.error("Lỗi xóa: " + error.message);
+        } else {
+            toast.success("Đã xóa thuốc");
+            fetchMedicines();
+        }
     };
 
-    const formatDate = (dateString?: string) => {
-        if (!dateString) return '-';
-        return new Date(dateString).toLocaleDateString('vi-VN', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
-    };
-
-    if (loading && medicines.length === 0) {
-        return <div className="p-8 text-center text-muted-foreground italic">Đang tải danh sách thuốc...</div>;
-    }
+    const formatCurrency = (value: number) =>
+        new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
 
     return (
-        <div className="rounded-md border bg-card text-card-foreground shadow-sm">
-            <Table className="border-collapse">
-                <TableHeader>
-                    <TableRow>
-                        <TableHead className="w-[80px]">ID</TableHead>
-                        <TableHead>Tên thuốc</TableHead>
-                        <TableHead>Đơn vị</TableHead>
-                        <TableHead className="text-right">Giá bán</TableHead>
-                        <TableHead className="text-right">Tồn kho</TableHead>
-                        <TableHead>Cập nhật lần cuối</TableHead>
-                        <TableHead className="text-center w-[100px]">Thao tác</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {medicines.length === 0 ? (
-                        <TableRow>
-                            <TableCell colSpan={7} className="h-24 text-center text-muted-foreground italic">
-                                Chưa có thuốc nào trong kho.
-                            </TableCell>
-                        </TableRow>
-                    ) : (
-                        medicines.map((medicine, index) => (
-                            <TableRow
-                                key={medicine.id}
-                                className={index % 2 === 0 ? 'bg-background' : 'bg-muted/30'}
-                            >
-                                <TableCell className="font-medium">{medicine.id}</TableCell>
-                                <TableCell>{medicine.name}</TableCell>
-                                <TableCell>{medicine.unit}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(medicine.price)}</TableCell>
-                                <TableCell className="text-right font-semibold">
-                                    {medicine.quantity}
-                                </TableCell>
-                                <TableCell>{formatDate(medicine.updated_at)}</TableCell>
-                                <TableCell className="text-center">
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => handleEdit(medicine)}
-                                        title="Chỉnh sửa"
-                                    >
-                                        <Edit className="h-4 w-4 text-blue-600" />
-                                    </Button>
-                                </TableCell>
-                            </TableRow>
-                        ))
-                    )}
-                </TableBody>
-            </Table>
+        <div className="space-y-4">
+            <div className="flex justify-between items-center bg-white p-4 rounded-lg border shadow-sm">
+                <h2 className="text-lg font-semibold">Kho Thuốc ({medicines.length})</h2>
+                {/* Nút Thêm Thuốc */}
+                <Button onClick={openAddModal} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                    <Plus className="mr-2 h-4 w-4" /> Thêm thuốc mới
+                </Button>
+            </div>
 
-            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-                <DialogContent className="sm:max-w-[425px]">
+            <div className="rounded-md border bg-card shadow-sm overflow-hidden">
+                <Table>
+                    <TableHeader className="bg-slate-50">
+                        <TableRow>
+                            <TableHead>Tên thuốc</TableHead>
+                            <TableHead>Đơn vị</TableHead>
+                            <TableHead className="text-right">Giá bán</TableHead>
+                            <TableHead className="text-right">Tồn kho</TableHead>
+                            <TableHead className="text-center w-[120px]">Thao tác</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {loading ? (
+                            <TableRow><TableCell colSpan={5} className="text-center h-24">Đang tải...</TableCell></TableRow>
+                        ) : medicines.length === 0 ? (
+                            <TableRow><TableCell colSpan={5} className="text-center h-24 italic">Kho trống</TableCell></TableRow>
+                        ) : (
+                            medicines.map((item) => (
+                                <TableRow key={item.id}>
+                                    <TableCell className="font-medium">{item.name}</TableCell>
+                                    <TableCell>{item.unit}</TableCell>
+                                    <TableCell className="text-right">{formatCurrency(item.price)}</TableCell>
+                                    <TableCell className={`text-right font-bold ${item.quantity < 10 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                        {item.quantity}
+                                    </TableCell>
+                                    <TableCell className="text-center space-x-2">
+                                        <Button variant="ghost" size="icon" onClick={() => openEditModal(item)}>
+                                            <Edit className="h-4 w-4 text-blue-600" />
+                                        </Button>
+                                        <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
+                                            <Trash2 className="h-4 w-4 text-red-400" />
+                                        </Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))
+                        )}
+                    </TableBody>
+                </Table>
+            </div>
+
+            {/* Dialog Form */}
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Chỉnh sửa thông tin thuốc</DialogTitle>
-                        <DialogDescription>
-                            Thay đổi giá bán và số lượng tồn kho của thuốc. Nhấn lưu để áp dụng thay đổi.
-                        </DialogDescription>
+                        <DialogTitle>{formData.id ? 'Cập nhật thuốc' : 'Thêm thuốc mới'}</DialogTitle>
+                        <DialogDescription>Nhập thông tin chi tiết bên dưới.</DialogDescription>
                     </DialogHeader>
-                    {editingMedicine && (
-                        <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="name" className="text-right">
-                                    Tên thuốc
-                                </Label>
-                                <Input
-                                    id="name"
-                                    value={editingMedicine.name}
-                                    disabled
-                                    className="col-span-3 bg-muted"
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="price" className="text-right">
-                                    Giá bán
-                                </Label>
-                                <Input
-                                    id="price"
-                                    type="number"
-                                    value={editingMedicine.price}
-                                    onChange={(e) => setEditingMedicine({ ...editingMedicine, price: Number(e.target.value) })}
-                                    className="col-span-3"
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="quantity" className="text-right">
-                                    Tồn kho
-                                </Label>
-                                <Input
-                                    id="quantity"
-                                    type="number"
-                                    value={editingMedicine.quantity}
-                                    onChange={(e) => setEditingMedicine({ ...editingMedicine, quantity: Number(e.target.value) })}
-                                    className="col-span-3"
-                                />
-                            </div>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Tên thuốc</Label>
+                            <Input
+                                value={formData.name || ''}
+                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                disabled={!!formData.id}
+                                className="col-span-3"
+                                placeholder="Ví dụ: Panadol Extra"
+                            />
                         </div>
-                    )}
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Đơn vị</Label>
+                            <Input
+                                value={formData.unit || ''}
+                                onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                                className="col-span-3"
+                                placeholder="Viên / Vỉ / Hộp"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Giá bán</Label>
+                            <Input
+                                type="number"
+                                value={formData.price || ''}
+                                onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Tồn kho</Label>
+                            <Input
+                                type="number"
+                                value={formData.quantity || ''}
+                                onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
+                                className="col-span-3"
+                            />
+                        </div>
+                    </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
-                            Hủy
-                        </Button>
-                        <Button onClick={handleSave} disabled={isSaving} className="bg-blue-600 hover:bg-blue-700">
+                        <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Hủy</Button>
+                        <Button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Lưu thay đổi
+                            {formData.id ? 'Lưu thay đổi' : 'Thêm thuốc'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
