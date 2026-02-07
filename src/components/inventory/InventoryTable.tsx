@@ -23,13 +23,19 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 import { toast } from 'sonner';
 
 export default function InventoryTable() {
     const [medicines, setMedicines] = useState<Medicine[]>([]);
     const [loading, setLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
-    // Nếu editingMedicine = null (hoặc id = undefined) nghĩa là đang Thêm mới
     const [formData, setFormData] = useState<Partial<Medicine>>({});
     const [isSaving, setIsSaving] = useState(false);
 
@@ -58,22 +64,19 @@ export default function InventoryTable() {
         fetchMedicines();
     }, [fetchMedicines]);
 
-    // Hàm mở Dialog THÊM MỚI
     const openAddModal = () => {
-        setFormData({}); // Reset form trắng
-        setIsDialogOpen(true); // Mở Dialog
+        setFormData({});
+        setIsDialogOpen(true);
     };
 
-    // Hàm mở Dialog SỬA
     const openEditModal = (medicine: Medicine) => {
-        setFormData(medicine); // Điền dữ liệu cũ
-        setIsDialogOpen(true); // Mở Dialog
+        setFormData(medicine);
+        setIsDialogOpen(true);
     };
 
     const handleSave = async () => {
-        // Validate
         if (!formData.name || !formData.unit || formData.price === undefined) {
-            toast.error("Vui lòng nhập tên, đơn vị và giá!");
+            toast.error("Vui lòng nhập tên, chọn đơn vị và nhập giá!");
             return;
         }
 
@@ -81,7 +84,6 @@ export default function InventoryTable() {
             setIsSaving(true);
 
             if (formData.id) {
-                // --- LOGIC SỬA (UPDATE) ---
                 const { error } = await supabase
                     .from('medicines')
                     .update({
@@ -94,7 +96,6 @@ export default function InventoryTable() {
                 if (error) throw error;
                 toast.success('Cập nhật thành công!');
             } else {
-                // --- LOGIC THÊM MỚI (INSERT) ---
                 const { error } = await supabase
                     .from('medicines')
                     .insert([{
@@ -108,8 +109,8 @@ export default function InventoryTable() {
                 toast.success('Thêm thuốc mới thành công!');
             }
 
-            setIsDialogOpen(false); // Đóng Dialog
-            fetchMedicines(); // Tải lại bảng
+            setIsDialogOpen(false);
+            fetchMedicines();
         } catch (error: any) {
             console.error('Save error:', error);
             toast.error('Lỗi: ' + error.message);
@@ -141,7 +142,6 @@ export default function InventoryTable() {
         <div className="space-y-4">
             <div className="flex justify-between items-center bg-white p-4 rounded-lg border shadow-sm">
                 <h2 className="text-lg font-semibold">Kho Thuốc ({medicines.length})</h2>
-                {/* Nút Thêm Thuốc */}
                 <Button onClick={openAddModal} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                     <Plus className="mr-2 h-4 w-4" /> Thêm thuốc mới
                 </Button>
@@ -187,7 +187,6 @@ export default function InventoryTable() {
                 </Table>
             </div>
 
-            {/* Dialog Form */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogContent>
                     <DialogHeader>
@@ -195,6 +194,7 @@ export default function InventoryTable() {
                         <DialogDescription>Nhập thông tin chi tiết bên dưới.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
+                        {/* Tên thuốc */}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right">Tên thuốc</Label>
                             <Input
@@ -205,15 +205,33 @@ export default function InventoryTable() {
                                 placeholder="Ví dụ: Panadol Extra"
                             />
                         </div>
+
+                        {/* Đơn vị - Dropdown Select */}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right">Đơn vị</Label>
-                            <Input
-                                value={formData.unit || ''}
-                                onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                                className="col-span-3"
-                                placeholder="Viên / Vỉ / Hộp"
-                            />
+                            <div className="col-span-3">
+                                <Select
+                                    value={formData.unit}
+                                    onValueChange={(value) => setFormData({ ...formData, unit: value })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Chọn đơn vị" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Viên">Viên</SelectItem>
+                                        <SelectItem value="Vỉ">Vỉ</SelectItem>
+                                        <SelectItem value="Hộp">Hộp</SelectItem>
+                                        <SelectItem value="Chai">Chai</SelectItem>
+                                        <SelectItem value="Lọ">Lọ</SelectItem>
+                                        <SelectItem value="Gói">Gói</SelectItem>
+                                        <SelectItem value="Tuýp">Tuýp</SelectItem>
+                                        <SelectItem value="Ống">Ống</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
+
+                        {/* Giá bán */}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right">Giá bán</Label>
                             <Input
@@ -223,6 +241,8 @@ export default function InventoryTable() {
                                 className="col-span-3"
                             />
                         </div>
+
+                        {/* Tồn kho */}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right">Tồn kho</Label>
                             <Input
