@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Edit } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Edit, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Medicine } from '@/types';
 import {
@@ -13,34 +13,82 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 
 export default function InventoryTable() {
     const [medicines, setMedicines] = useState<Medicine[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+    const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
+
+    const fetchMedicines = useCallback(async () => {
+        try {
+            setLoading(true);
+            const { data, error } = await supabase
+                .from('medicines')
+                .select('*')
+                .order('id', { ascending: true });
+
+            if (error) {
+                toast.error('Lỗi khi tải danh sách thuốc: ' + error.message);
+            } else {
+                setMedicines(data || []);
+            }
+        } catch (error) {
+            console.error('Unexpected error:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
-        async function fetchMedicines() {
-            try {
-                setLoading(true);
-                const { data, error } = await supabase
-                    .from('medicines')
-                    .select('*')
-                    .order('id', { ascending: true });
-
-                if (error) {
-                    console.error('Error fetching medicines:', error);
-                } else {
-                    setMedicines(data || []);
-                }
-            } catch (error) {
-                console.error('Unexpected error:', error);
-            } finally {
-                setLoading(false);
-            }
-        }
-
         fetchMedicines();
-    }, []);
+    }, [fetchMedicines]);
+
+    const handleEdit = (medicine: Medicine) => {
+        setEditingMedicine({ ...medicine });
+        setIsEditDialogOpen(true);
+    };
+
+    const handleSave = async () => {
+        if (!editingMedicine) return;
+
+        try {
+            setIsSaving(true);
+            const { error } = await supabase
+                .from('medicines')
+                .update({
+                    price: editingMedicine.price,
+                    quantity: editingMedicine.quantity,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', editingMedicine.id);
+
+            if (error) {
+                toast.error('Lỗi khi cập nhật: ' + error.message);
+            } else {
+                toast.success('Cập nhật thành công!');
+                setIsEditDialogOpen(false);
+                fetchMedicines();
+            }
+        } catch (error) {
+            console.error('Update error:', error);
+            toast.error('Đã xảy ra lỗi không xác định.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat('vi-VN', {
@@ -60,7 +108,7 @@ export default function InventoryTable() {
         });
     };
 
-    if (loading) {
+    if (loading && medicines.length === 0) {
         return <div className="p-8 text-center text-muted-foreground italic">Đang tải danh sách thuốc...</div>;
     }
 
@@ -103,7 +151,7 @@ export default function InventoryTable() {
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        onClick={() => console.log('Edit medicine:', medicine.id)}
+                                        onClick={() => handleEdit(medicine)}
                                         title="Chỉnh sửa"
                                     >
                                         <Edit className="h-4 w-4 text-blue-600" />
@@ -114,6 +162,65 @@ export default function InventoryTable() {
                     )}
                 </TableBody>
             </Table>
+
+            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+                <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                        <DialogTitle>Chỉnh sửa thông tin thuốc</DialogTitle>
+                        <DialogDescription>
+                            Thay đổi giá bán và số lượng tồn kho của thuốc. Nhấn lưu để áp dụng thay đổi.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {editingMedicine && (
+                        <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="name" className="text-right">
+                                    Tên thuốc
+                                </Label>
+                                <Input
+                                    id="name"
+                                    value={editingMedicine.name}
+                                    disabled
+                                    className="col-span-3 bg-muted"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="price" className="text-right">
+                                    Giá bán
+                                </Label>
+                                <Input
+                                    id="price"
+                                    type="number"
+                                    value={editingMedicine.price}
+                                    onChange={(e) => setEditingMedicine({ ...editingMedicine, price: Number(e.target.value) })}
+                                    className="col-span-3"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="quantity" className="text-right">
+                                    Tồn kho
+                                </Label>
+                                <Input
+                                    id="quantity"
+                                    type="number"
+                                    value={editingMedicine.quantity}
+                                    onChange={(e) => setEditingMedicine({ ...editingMedicine, quantity: Number(e.target.value) })}
+                                    className="col-span-3"
+                                />
+                            </div>
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
+                            Hủy
+                        </Button>
+                        <Button onClick={handleSave} disabled={isSaving} className="bg-blue-600 hover:bg-blue-700">
+                            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Lưu thay đổi
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
