@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { Edit, Loader2, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Edit, Loader2, Plus, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Medicine } from '@/types';
 import {
@@ -31,6 +31,8 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { toast } from 'sonner';
+import TransactionHistoryDialog from '@/components/history/TransactionHistoryDialog';
+import { History } from 'lucide-react'; // Import thêm icon History
 
 export default function InventoryTable() {
     const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -38,6 +40,8 @@ export default function InventoryTable() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [formData, setFormData] = useState<Partial<Medicine>>({});
     const [isSaving, setIsSaving] = useState(false);
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+    const [sortConfig, setSortConfig] = useState<{ key: keyof Medicine; direction: 'asc' | 'desc' } | null>({ key: 'name', direction: 'asc' });
 
     const fetchMedicines = useCallback(async () => {
         try {
@@ -135,6 +139,40 @@ export default function InventoryTable() {
         }
     };
 
+    const handleSort = (key: keyof Medicine) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const sortedMedicines = useMemo(() => {
+        const items = [...medicines];
+        if (sortConfig !== null) {
+            items.sort((a, b) => {
+                const aValue = a[sortConfig.key];
+                const bValue = b[sortConfig.key];
+
+                if (aValue === undefined || bValue === undefined) return 0;
+
+                if (aValue < bValue) {
+                    return sortConfig.direction === 'asc' ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return sortConfig.direction === 'asc' ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return items;
+    }, [medicines, sortConfig]);
+
+    const getSortIcon = (key: keyof Medicine) => {
+        if (!sortConfig || sortConfig.key !== key) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-50" />;
+        return sortConfig.direction === 'asc' ? <ArrowUp className="ml-2 h-4 w-4" /> : <ArrowDown className="ml-2 h-4 w-4" />;
+    };
+
     const formatCurrency = (value: number) =>
         new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
 
@@ -142,29 +180,50 @@ export default function InventoryTable() {
         <div className="space-y-4">
             <div className="flex justify-between items-center bg-white p-4 rounded-lg border shadow-sm">
                 <h2 className="text-lg font-semibold">Kho Thuốc ({medicines.length})</h2>
-                <Button onClick={openAddModal} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-                    <Plus className="mr-2 h-4 w-4" /> Thêm thuốc mới
-                </Button>
+                <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setIsHistoryOpen(true)}>
+                        <History className="mr-2 h-4 w-4" /> Xem lịch sử
+                    </Button>
+                    <Button onClick={openAddModal} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                        <Plus className="mr-2 h-4 w-4" /> Thêm thuốc mới
+                    </Button>
+                </div>
             </div>
 
             <div className="rounded-md border bg-card shadow-sm overflow-hidden">
                 <Table>
                     <TableHeader className="bg-slate-50">
                         <TableRow>
-                            <TableHead>Tên thuốc</TableHead>
-                            <TableHead>Đơn vị</TableHead>
-                            <TableHead className="text-right">Giá bán</TableHead>
-                            <TableHead className="text-right">Tồn kho</TableHead>
+                            <TableHead className="cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('name')}>
+                                <div className="flex items-center">
+                                    Tên thuốc {getSortIcon('name')}
+                                </div>
+                            </TableHead>
+                            <TableHead className="cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('unit')}>
+                                <div className="flex items-center">
+                                    Đơn vị {getSortIcon('unit')}
+                                </div>
+                            </TableHead>
+                            <TableHead className="text-right cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('price')}>
+                                <div className="flex items-center justify-end">
+                                    Giá bán {getSortIcon('price')}
+                                </div>
+                            </TableHead>
+                            <TableHead className="text-right cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('quantity')}>
+                                <div className="flex items-center justify-end">
+                                    Tồn kho {getSortIcon('quantity')}
+                                </div>
+                            </TableHead>
                             <TableHead className="text-center w-[120px]">Thao tác</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {loading ? (
                             <TableRow><TableCell colSpan={5} className="text-center h-24">Đang tải...</TableCell></TableRow>
-                        ) : medicines.length === 0 ? (
+                        ) : sortedMedicines.length === 0 ? (
                             <TableRow><TableCell colSpan={5} className="text-center h-24 italic">Kho trống</TableCell></TableRow>
                         ) : (
-                            medicines.map((item) => (
+                            sortedMedicines.map((item) => (
                                 <TableRow key={item.id}>
                                     <TableCell className="font-medium">{item.name}</TableCell>
                                     <TableCell>{item.unit}</TableCell>
@@ -261,6 +320,10 @@ export default function InventoryTable() {
                         </Button>
                     </DialogFooter>
                 </DialogContent>
+                <TransactionHistoryDialog
+                    open={isHistoryOpen}
+                    onOpenChange={setIsHistoryOpen}
+                />
             </Dialog>
         </div>
     );

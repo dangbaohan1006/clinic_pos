@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, ShoppingCart, Trash2, CreditCard, Loader2, Pill } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CreditCard, Loader2, Pill, CheckCircle2, Receipt, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Medicine, CartItem } from '@/types';
 import {
@@ -15,7 +15,17 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import TransactionHistoryDialog from '@/components/history/TransactionHistoryDialog';
+import { History } from 'lucide-react';
 
 export default function DoctorPOS() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -23,8 +33,16 @@ export default function DoctorPOS() {
     const [cart, setCart] = useState<CartItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [isCheckingOut, setIsCheckingOut] = useState(false);
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
-    // --- 1. Logic Tìm kiếm (Real-time Search) ---
+    // State mới: Popup xác nhận hóa đơn
+    const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
+    // State cho Popup thành công
+    const [isSuccessOpen, setIsSuccessOpen] = useState(false);
+    const [lastOrderTotal, setLastOrderTotal] = useState(0);
+
+    // --- 1. Logic Tìm kiếm ---
     const handleSearch = useCallback(async (query: string) => {
         if (!query.trim()) {
             setSearchResults([]);
@@ -36,8 +54,8 @@ export default function DoctorPOS() {
             const { data, error } = await supabase
                 .from('medicines')
                 .select('*')
-                .ilike('name', `%${query}%`) // Tìm gần đúng theo tên
-                .eq('active', true)          // Chỉ lấy thuốc đang kinh doanh
+                .ilike('name', `%${query}%`)
+                .eq('active', true)
                 .limit(5);
 
             if (error) {
@@ -52,7 +70,6 @@ export default function DoctorPOS() {
         }
     }, []);
 
-    // Debounce: Chỉ tìm kiếm sau khi ngừng gõ 300ms
     useEffect(() => {
         const timer = setTimeout(() => {
             handleSearch(searchQuery);
@@ -62,7 +79,6 @@ export default function DoctorPOS() {
 
     // --- 2. Logic Giỏ hàng ---
     const addToCart = (medicine: Medicine) => {
-        // Kiểm tra tồn kho trước khi thêm
         if (medicine.quantity <= 0) {
             toast.error(`Thuốc ${medicine.name} đã hết hàng!`);
             return;
@@ -71,7 +87,6 @@ export default function DoctorPOS() {
         setCart((prevCart) => {
             const existingItem = prevCart.find((item) => item.id === medicine.id);
             if (existingItem) {
-                // Nếu đã có trong giỏ, kiểm tra xem thêm 1 đơn vị nữa có vượt quá kho không
                 if (existingItem.buyQuantity + 1 > medicine.quantity) {
                     toast.warning(`Kho chỉ còn ${medicine.quantity} ${medicine.unit}. Không thể bán thêm.`);
                     return prevCart;
@@ -80,11 +95,9 @@ export default function DoctorPOS() {
                     item.id === medicine.id ? { ...item, buyQuantity: item.buyQuantity + 1 } : item
                 );
             }
-            // Nếu chưa có, thêm mới
             return [...prevCart, { ...medicine, buyQuantity: 1 }];
         });
 
-        // Reset tìm kiếm để bác sĩ nhập thuốc tiếp theo
         setSearchQuery('');
         setSearchResults([]);
     };
@@ -94,12 +107,11 @@ export default function DoctorPOS() {
     };
 
     const updateQuantity = (id: number, newQuantity: number) => {
-        if (newQuantity <= 0) return; // Không cho nhập số âm hoặc 0
+        if (newQuantity <= 0) return;
 
         setCart((prevCart) => {
             return prevCart.map((item) => {
                 if (item.id === id) {
-                    // Chặn nhập quá số lượng tồn kho
                     if (newQuantity > item.quantity) {
                         toast.warning(`Kho chỉ còn ${item.quantity} ${item.unit}.`);
                         return { ...item, buyQuantity: item.quantity };
@@ -120,24 +132,28 @@ export default function DoctorPOS() {
         }).format(value);
     };
 
-    // --- 3. Logic Thanh toán (Quan trọng nhất) ---
-    const handleCheckout = async () => {
+    // --- 3. Logic: BƯỚC 1 - Bấm nút thanh toán -> Mở Bill ---
+    const handlePreCheckout = () => {
         if (cart.length === 0) {
             toast.error('Giỏ hàng trống!');
             return;
         }
+        setIsConfirmOpen(true); // Mở popup hóa đơn
+    };
 
+    // --- 4. Logic: BƯỚC 2 - Xác nhận thật -> Gọi API trừ kho ---
+    const handleFinalCheckout = async () => {
         try {
             setIsCheckingOut(true);
 
-            // Chuẩn bị dữ liệu gửi xuống Database Function
-            // Payload này phải khớp KEY với code SQL: item->>'id' và item->>'buyQuantity'
+            // Payload gửi đi
             const payload = cart.map(item => ({
                 id: item.id,
-                buyQuantity: item.buyQuantity
+                buyQuantity: item.buyQuantity,
+                name: item.name,
+                price: item.price
             }));
 
-            // Gọi hàm RPC 'process_order'
             const { data, error } = await supabase.rpc('process_order', {
                 cart_items: payload
             });
@@ -145,13 +161,15 @@ export default function DoctorPOS() {
             if (error) {
                 console.error("RPC Error:", error);
                 toast.error('Lỗi giao dịch: ' + error.message);
+                setIsConfirmOpen(false); // Đóng Bill nếu lỗi
             } else if (data && data.success) {
-                // Giao dịch thành công
-                toast.success('Thanh toán thành công! Đã trừ kho.');
-                setCart([]); // Xóa giỏ hàng
+                setLastOrderTotal(totalAmount);
+                setCart([]);
+                setIsConfirmOpen(false); // Đóng Bill
+                setIsSuccessOpen(true);  // Mở Popup Thành công
             } else {
-                // Giao dịch thất bại do logic (ví dụ hết hàng giữa chừng)
                 toast.error('Thất bại: ' + (data?.message || 'Lỗi không xác định'));
+                setIsConfirmOpen(false);
             }
         } catch (error) {
             console.error('Checkout error:', error);
@@ -165,14 +183,16 @@ export default function DoctorPOS() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-4 md:p-8 h-[calc(100vh-80px)]">
             {/* Cột Trái: Tìm kiếm */}
             <Card className="flex flex-col h-full border-slate-200 shadow-sm">
-                <CardHeader className="pb-4">
-                    <CardTitle className="flex items-center gap-2 text-xl">
-                        <Search className="h-5 w-5 text-blue-600" />
-                        Tìm kiếm thuốc
-                    </CardTitle>
-                    <CardDescription>Nhập tên thuốc để thêm vào đơn hàng</CardDescription>
+                <CardHeader className="bg-white border-b pb-4 rounded-t-xl flex flex-row items-center justify-between">
+                    <div>
+                        <CardTitle className="flex items-center gap-2 text-xl text-emerald-700">
+                            <ShoppingCart className="h-6 w-6" />
+                            Tìm kiếm thuốc
+                        </CardTitle>
+                        <CardDescription>Nhập tên thuốc để thêm vào đơn hàng</CardDescription>
+                    </div>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-4 pt-6">
                     <div className="relative">
                         <Input
                             placeholder="Nhập tên thuốc... (VD: Panadol)"
@@ -228,12 +248,17 @@ export default function DoctorPOS() {
 
             {/* Cột Phải: Giỏ hàng */}
             <Card className="flex flex-col h-full border-slate-200 shadow-sm bg-slate-50/50">
-                <CardHeader className="bg-white border-b pb-4 rounded-t-xl">
-                    <CardTitle className="flex items-center gap-2 text-xl text-emerald-700">
-                        <ShoppingCart className="h-6 w-6" />
-                        Đơn hàng hiện tại
-                    </CardTitle>
-                    <CardDescription>Danh sách thuốc bác sĩ kê đơn</CardDescription>
+                <CardHeader className="bg-white border-b pb-4 rounded-t-xl flex flex-row items-center justify-between">
+                    <div>
+                        <CardTitle className="flex items-center gap-2 text-xl text-emerald-700">
+                            <ShoppingCart className="h-6 w-6" />
+                            Đơn hàng hiện tại
+                        </CardTitle>
+                        <CardDescription>Danh sách thuốc bác sĩ kê đơn</CardDescription>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setIsHistoryOpen(true)}>
+                        <History className="h-4 w-4 mr-2" /> Lịch sử
+                    </Button>
                 </CardHeader>
 
                 <CardContent className="flex-1 overflow-y-auto p-0">
@@ -295,20 +320,114 @@ export default function DoctorPOS() {
                             {formatCurrency(totalAmount)}
                         </span>
                     </div>
+                    {/* Nút này bây giờ chỉ mở Bill xem trước, KHÔNG trừ kho ngay */}
                     <Button
                         className="w-full h-14 text-lg font-semibold bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200 shadow-lg transition-all active:scale-[0.98]"
                         disabled={isCheckingOut || cart.length === 0}
-                        onClick={handleCheckout}
+                        onClick={handlePreCheckout}
                     >
-                        {isCheckingOut ? (
-                            <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-                        ) : (
-                            <CreditCard className="mr-2 h-6 w-6" />
-                        )}
-                        {isCheckingOut ? 'Đang xử lý...' : 'Thanh toán & Trừ kho'}
+                        <CreditCard className="mr-2 h-6 w-6" />
+                        Thanh toán
                     </Button>
                 </CardFooter>
             </Card>
+
+            {/* --- POPUP 1: XÁC NHẬN HÓA ĐƠN (BILL) --- */}
+            <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+                <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-xl border-b pb-4">
+                            <Receipt className="h-6 w-6 text-slate-600" />
+                            Xác nhận đơn hàng
+                        </DialogTitle>
+                        <DialogDescription className="pt-2">
+                            Vui lòng kiểm tra kỹ đơn thuốc trước khi in bill và trừ kho.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {/* Nội dung Bill */}
+                    <div className="bg-slate-50 p-4 rounded-md border border-slate-200 max-h-[300px] overflow-y-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="text-slate-500 border-b">
+                                    <th className="text-left pb-2 font-medium">Thuốc</th>
+                                    <th className="text-center pb-2 font-medium">SL</th>
+                                    <th className="text-right pb-2 font-medium">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {cart.map((item, idx) => (
+                                    <tr key={idx} className="border-b border-dashed border-slate-200 last:border-0">
+                                        <td className="py-2 text-slate-700 font-medium">{item.name}</td>
+                                        <td className="py-2 text-center text-slate-600">x{item.buyQuantity}</td>
+                                        <td className="py-2 text-right font-bold text-slate-700">
+                                            {formatCurrency(item.price * item.buyQuantity)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="flex justify-between items-center px-2 py-2">
+                        <span className="text-lg font-bold text-slate-700">Tổng thanh toán:</span>
+                        <span className="text-2xl font-bold text-blue-600">{formatCurrency(totalAmount)}</span>
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0 mt-4">
+                        <Button variant="outline" onClick={() => setIsConfirmOpen(false)} className="w-full sm:w-auto">
+                            <X className="mr-2 h-4 w-4" /> Quay lại
+                        </Button>
+                        <Button
+                            onClick={handleFinalCheckout}
+                            disabled={isCheckingOut}
+                            className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700"
+                        >
+                            {isCheckingOut ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                            Xác nhận và trừ kho
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* --- POPUP 2: THÔNG BÁO THÀNH CÔNG --- */}
+            <Dialog open={isSuccessOpen} onOpenChange={setIsSuccessOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <div className="flex flex-col items-center justify-center py-6 gap-4">
+                        <div className="p-3 bg-emerald-100 rounded-full">
+                            <CheckCircle2 className="h-12 w-12 text-emerald-600" />
+                        </div>
+                        <DialogHeader>
+                            <DialogTitle className="text-center text-2xl font-bold text-slate-900">
+                                Giao dịch thành công!
+                            </DialogTitle>
+                            <DialogDescription className="text-center text-lg text-slate-600">
+                                Hệ thống đã trừ kho và lưu lịch sử.
+                            </DialogDescription>
+                            <div className="bg-slate-50 p-4 rounded-lg mt-4 w-full border border-slate-100">
+                                <div className="text-center text-slate-500 text-sm mb-1">Tổng tiền đã thu</div>
+                                <div className="text-center text-3xl font-bold text-blue-600">
+                                    {formatCurrency(lastOrderTotal)}
+                                </div>
+                            </div>
+                        </DialogHeader>
+                    </div>
+                    <DialogFooter className="sm:justify-center w-full">
+                        <Button
+                            onClick={() => setIsSuccessOpen(false)}
+                            className="bg-slate-900 hover:bg-slate-800 w-full h-12 text-lg"
+                        >
+                            Đóng và tiếp tục đơn mới
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* POPUP LỊCH SỬ */}
+            <TransactionHistoryDialog
+                open={isHistoryOpen}
+                onOpenChange={setIsHistoryOpen}
+            />
         </div>
     );
 }
